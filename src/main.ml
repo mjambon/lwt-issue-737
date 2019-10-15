@@ -9,10 +9,6 @@ open Lwt
 let print_line s =
   printf "[%i] %s\n%!" (Unix.getpid ()) s
 
-let run_child_job () =
-  (* log something *)
-  print_line "hello"
-
 let reap_child child_pid =
   Lwt_unix.waitpid [] child_pid >>= fun (_pid, _status) ->
   return ()
@@ -37,7 +33,7 @@ let print_child_logs ~child_pid lwt_log_input_fd =
       | e -> raise e (* and die *)
     )
 
-let create_worker job =
+let create_worker () =
   let lwt_log_input_fd, lwt_log_output_fd = Lwt_unix.pipe () in
   let log_input_fd = Lwt_unix.unix_file_descr lwt_log_input_fd in
   let log_output_fd = Lwt_unix.unix_file_descr lwt_log_output_fd in
@@ -46,16 +42,16 @@ let create_worker job =
       Unix.close log_input_fd;
       Unix.dup2 log_output_fd Unix.stdout;
       Unix.dup2 log_output_fd Unix.stderr;
-      job ();
+      print_line "hello";
       exit 0
   | child_pid ->
-      let logger = print_child_logs ~child_pid log_input_fd in
-      async (fun () -> logger);
-      return child_pid
+      async (fun () ->
+        print_child_logs ~child_pid log_input_fd
+      )
 
 let run num_children =
   Array.init num_children (fun _i ->
-    create_worker run_child_job >>= fun _child_pid ->
+    create_worker ();
     Lwt_unix.sleep 1.
   )
   |> Array.to_list
