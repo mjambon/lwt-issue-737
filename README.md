@@ -12,8 +12,24 @@ The problem was obtained with Lwt 4.4.0 and OCaml 4.05.0 on Linux
 $ make
 ```
 
+Source code
+--
+
+The program is [src/main.ml].
+
 Output
 --
+
+The output comes from the `print_line` command which writes the
+current process ID in square brackets, followed by a
+message on a single line. Ultimately, all messages are produced
+by the original process, parent of all the children.
+
+```
+[9776] child 9790 says: {[9790] hello}
+```
+is to be read as "process 9776 prints the message received from
+process 9790 which is '[9790] hello'".
 
 The output looks like this:
 ```
