@@ -33,6 +33,18 @@ let print_child_logs ~child_pid lwt_log_input_fd =
       | e -> raise e (* and die *)
     )
 
+(*
+   We create a child process connected to the parent via a pipe.
+   The standard output of the child is redirected to the pipe.
+   The parent reads from the pipe and prints these lines on stdout.
+
+   We expect the child to only write to the pipe that we create here.
+   In particular, it should not read from pipes connected to previous
+   children of its parent even though it inherits them.
+
+   Nevertheless, we observe than the child will sometimes obtain data
+   printed by one of its older siblings and print it.
+*)
 let create_worker () =
   let lwt_log_input_fd, lwt_log_output_fd = Lwt_unix.pipe () in
   let log_input_fd = Lwt_unix.unix_file_descr lwt_log_input_fd in
