@@ -15,7 +15,7 @@ $ make
 Source code
 --
 
-The program is [src/main.ml].
+The program is [src/main.ml](src/main.ml).
 
 Output
 --
