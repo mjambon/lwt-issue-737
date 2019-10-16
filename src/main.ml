@@ -1,5 +1,5 @@
 (*
-   Attempt to reproduce bug: lwt tasks inherited by parent process,
+   Attempt to reproduce bug: lwt tasks inherited from parent process,
    executing in child process.
 *)
 
