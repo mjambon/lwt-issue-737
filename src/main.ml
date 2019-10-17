@@ -56,6 +56,8 @@ let close_pipe_reads () =
       )
   ) !pipe_reads
 
+external sys_exit : int -> 'a = "caml_sys_exit"
+
 (*
    We create a child process connected to the parent via a pipe.
    The standard output of the child is redirected to the pipe.
@@ -79,7 +81,24 @@ let create_worker () =
       Unix.dup2 log_output_fd Unix.stdout;
       print_line "hello"; (* goes to pipe *)
       print_err_line "moo"; (* goes to terminal directly *)
-      exit 0 (* runs at_exit hooks *)
+
+      (* Bypass exit hooks which would call 'Lwt_main.run', causing
+         some tasks inherited from the parent to run, such as the read loops
+         created by 'print_child_logs'.
+
+         Note that both OCaml calls relying on 'fork' such as 'Sys.command'
+         and the 'Lwt_process' module ('unix_spawn') call
+         'sys_exit' to bypass exit hooks. Unfortunately, 'sys_exit' isn't
+         public. It's obtained with:
+
+           external sys_exit : int -> 'a = "caml_sys_exit"
+
+         Another way to bypass the exit hooks is to use
+         'Unix.kill (Unix.getpid ()) Sys.sigkill' but it contrains the
+         termination status.
+      *)
+      sys_exit 0
+
   | child_pid ->
       async (fun () ->
         print_child_logs ~child_pid log_input_fd
