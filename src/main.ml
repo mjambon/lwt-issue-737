@@ -7,14 +7,19 @@ open Printf
 open Lwt
 
 let print_line s =
-  printf "[%i] %s\n%!" (Unix.getpid ()) s
+  printf "[pid %i] %s\n%!"
+    (Unix.getpid ()) s
+
+let print_err_line s =
+  eprintf "[pid %i stderr] %s\n%!"
+    (Unix.getpid ()) s
 
 let reap_child child_pid =
   Lwt_unix.waitpid [] child_pid >>= fun (_pid, _status) ->
   return ()
 
-let print_child_logs ~child_pid lwt_log_input_fd =
-  let input_channel = Lwt_io.of_unix_fd ~mode:Lwt_io.Input lwt_log_input_fd in
+let print_child_logs ~child_pid log_input_fd =
+  let input_channel = Lwt_io.of_unix_fd ~mode:Lwt_io.Input log_input_fd in
   let rec loop () =
     Lwt_io.read_line_opt input_channel >>= function
     | Some line ->
@@ -30,8 +35,26 @@ let print_child_logs ~child_pid lwt_log_input_fd =
   catch loop
     (function
       | Lwt_io.Channel_closed _ -> reap_child child_pid
-      | e -> raise e (* and die *)
+      | e ->
+          print_err_line (
+            sprintf "failed to read pipe input fd %i: %s"
+              (Obj.magic (log_input_fd : Unix.file_descr) : int)
+              (Printexc.to_string e)
+          );
+          return ()
     )
+
+let pipe_reads = ref []
+
+let close_pipe_reads () =
+  List.iter (fun fd ->
+    try Unix.close fd
+    with e ->
+      print_err_line (
+        sprintf "failed to close pipe input fd %i: %s"
+          (Obj.magic fd : int) (Printexc.to_string e)
+      )
+  ) !pipe_reads
 
 (*
    We create a child process connected to the parent via a pipe.
@@ -49,13 +72,14 @@ let create_worker () =
   let lwt_log_input_fd, lwt_log_output_fd = Lwt_unix.pipe () in
   let log_input_fd = Lwt_unix.unix_file_descr lwt_log_input_fd in
   let log_output_fd = Lwt_unix.unix_file_descr lwt_log_output_fd in
+  pipe_reads := log_input_fd :: !pipe_reads;
   match Lwt_unix.fork () with
   | 0 ->
-      Unix.close log_input_fd;
+      close_pipe_reads ();
       Unix.dup2 log_output_fd Unix.stdout;
-      Unix.dup2 log_output_fd Unix.stderr;
-      print_line "hello";
-      exit 0
+      print_line "hello"; (* goes to pipe *)
+      print_err_line "moo"; (* goes to terminal directly *)
+      exit 0 (* runs at_exit hooks *)
   | child_pid ->
       async (fun () ->
         print_child_logs ~child_pid log_input_fd
