@@ -1,4 +1,6 @@
 EXCLUDE_QUERY_DIR
+B /home/martin/.opam/4.08.0/lib/bisect_ppx/common
+B /home/martin/.opam/4.08.0/lib/bisect_ppx/runtime
 B /home/martin/.opam/4.08.0/lib/bytes
 B /home/martin/.opam/4.08.0/lib/lwt
 B /home/martin/.opam/4.08.0/lib/lwt/unix
@@ -9,6 +11,8 @@ B /home/martin/.opam/4.08.0/lib/ocplib-endian
 B /home/martin/.opam/4.08.0/lib/result
 B /home/martin/.opam/4.08.0/lib/seq
 B ../_build/default/src/.main.eobjs/byte
+S /home/martin/.opam/4.08.0/lib/bisect_ppx/common
+S /home/martin/.opam/4.08.0/lib/bisect_ppx/runtime
 S /home/martin/.opam/4.08.0/lib/bytes
 S /home/martin/.opam/4.08.0/lib/lwt
 S /home/martin/.opam/4.08.0/lib/lwt/unix

@@ -14,6 +14,63 @@ let print_err_line s =
   eprintf "[pid %i stderr] %s\n%!"
     (Unix.getpid ()) s
 
+module FD = struct
+  type t = Unix.file_descr
+
+  (* ugh *)
+  let of_string s = (Obj.magic (int_of_string s : int) : Unix.file_descr)
+  let to_string fd = string_of_int (Obj.magic (fd : Unix.file_descr) : int)
+
+  (*
+     Each entry in /proc/self/fd/ is a symlink to a name, which is a path
+     for regular files or something else for other types of files.
+     See 'man proc'.
+  *)
+  let get_filename fd =
+    let path = sprintf "/proc/self/fd/%s" (to_string fd) in
+    if Sys.file_exists path then
+      Some (Unix.readlink path)
+    else
+      None
+
+  let list () =
+    let a = Sys.readdir "/proc/self/fd" in
+    Array.fold_right (fun s acc ->
+      let fd =
+        try of_string s
+        with e ->
+          print_err_line (
+            sprintf
+              "Cannot convert %S to a file descriptor: %s"
+              s (Printexc.to_string e)
+          );
+          assert false
+      in
+      (* Ignore the file descriptor that was used by readdir and is now
+         invalid. *)
+      match get_filename fd with
+      | None -> acc
+      | Some filename -> (fd, filename) :: acc
+    ) a []
+
+  (* List.filter_map is only available from OCaml 4.08 *)
+  let filter_map f l =
+    List.fold_right (fun x acc ->
+      match f x with
+      | None -> acc
+      | Some y -> y :: acc
+    ) l []
+
+  let list_eventfd () =
+    list ()
+    |> filter_map (fun (fd, name) ->
+      match name with
+      (* that's what it is on my machine *)
+      | "anon_inode:[eventfd]" -> Some fd
+      | _ -> None
+    )
+end
+
 let reap_child child_pid =
   Lwt_unix.waitpid [] child_pid >>= fun (_pid, _status) ->
   return ()
@@ -46,7 +103,7 @@ let print_child_logs ~child_pid log_input_fd =
 
 let pipe_reads = ref []
 
-let close_pipe_reads () =
+let close_file_descriptors l =
   List.iter (fun fd ->
     try Unix.close fd
     with e ->
@@ -54,9 +111,45 @@ let close_pipe_reads () =
         sprintf "failed to close pipe input fd %i: %s"
           (Obj.magic fd : int) (Printexc.to_string e)
       )
-  ) !pipe_reads
+  ) l
+
+let close_pipe_reads () =
+  close_file_descriptors !pipe_reads
+
+let close_eventfd () =
+  FD.list_eventfd ()
+  |> close_file_descriptors
 
 external sys_exit : int -> 'a = "caml_sys_exit"
+
+let do_stuff () =
+  let ic, oc = Lwt_io.pipe () in
+  let rec write_loop () =
+    Lwt_io.write_line oc "yo" >>= fun () ->
+    write_loop ()
+  in
+  let read () =
+    catch
+      (fun () ->
+         Lwt_io.read_line_opt ic
+      )
+      (function
+        | Lwt_io.Channel_closed _ -> return None
+        | e ->
+            print_err_line (
+              sprintf "read_loop: failed to read pipe input: %s"
+                (Printexc.to_string e)
+            );
+            return None
+      )
+  in
+  let stream = Lwt_stream.from read in
+  async write_loop;
+  async (fun () ->
+    Lwt_stream.iter
+      (fun s -> ignore s)
+      stream
+  )
 
 (*
    We create a child process connected to the parent via a pipe.
@@ -71,12 +164,14 @@ external sys_exit : int -> 'a = "caml_sys_exit"
    printed by one of its older siblings and print it.
 *)
 let create_worker () =
+  do_stuff ();
   let lwt_log_input_fd, lwt_log_output_fd = Lwt_unix.pipe () in
   let log_input_fd = Lwt_unix.unix_file_descr lwt_log_input_fd in
   let log_output_fd = Lwt_unix.unix_file_descr lwt_log_output_fd in
   pipe_reads := log_input_fd :: !pipe_reads;
   match Lwt_unix.fork () with
   | 0 ->
+      close_eventfd ();
       close_pipe_reads ();
       Unix.dup2 log_output_fd Unix.stdout;
       print_line "hello"; (* goes to pipe *)
@@ -94,7 +189,7 @@ let create_worker () =
            external sys_exit : int -> 'a = "caml_sys_exit"
 
          Another way to bypass the exit hooks is to use
-         'Unix.kill (Unix.getpid ()) Sys.sigkill' but it contrains the
+         'Unix.kill (Unix.getpid ()) Sys.sigkill' but it constrains the
          termination status.
       *)
       sys_exit 0
@@ -102,11 +197,12 @@ let create_worker () =
   | child_pid ->
       async (fun () ->
         print_child_logs ~child_pid log_input_fd
-      )
+      );
+      return ()
 
 let run num_children =
   Array.init num_children (fun _i ->
-    create_worker ();
+    create_worker () >>= fun () ->
     Lwt_unix.sleep 1.
   )
   |> Array.to_list
